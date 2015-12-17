@@ -16,6 +16,32 @@ function escapeHtml(string)
     });
 }
 
+function log(n)
+{
+    console.log(n);
+}
+
+function safeParse( s )
+{
+    try
+    {
+        return JSON.parse(s);
+    }
+    catch (e)
+    {
+        return null;
+    }
+}
+
+function safeParseCont( s , faild , ok )
+{
+    var r = safeParse(s);
+    if (r == null)
+        faild();
+    else
+        ok(r);
+}
+
 function compHotLists( l1 , l2 )
 {
     if ( l1.length == 0 )
@@ -141,24 +167,29 @@ function writeDefaultMessage( cont )
 
 function pointIpnsTo( hash , cont )
 {
-    console.log( "pointIpnsTo" );
-    ipnsStatus.innerHTML = "Updating ipns";
-    httpGet( baseApiUrl + "name/publish?arg=" + hash , function(e){ console.log("ipns ok",e) ; ipnsStatus.innerHTML = "Ready" ; cont() ; } );
+    setStatus( "Updating ipns" );
+    httpGet( baseApiUrl + "name/publish?arg=" + hash , function(e){ setStatus("Ready") ; cont() ; } );
+}
+
+function defaultRoomConfig()
+{
+    return { others : []
+           , hotMessages : []
+           , archive : ""
+           , hotMessageAgeLimit : 1000 * 60 * 60
+           , userName : "Anon"
+           };
 }
 
 function writeDefaultChatConfig( cont )
 {
-    writeDefaultMessage( function(defaultMessageHash)
+    var room = defaultRoomConfig();
+    ipfsAdd( JSON.stringify(room) , function(roomHash)
     {
-        userChatConfig = { others : []
-                         , hotMessages : []
-                         , archive : defaultMessageHash
-                         , hotMessageAgeLimit : 1000 * 60 * 60
-                         , userName : "Anon"
+        userChatConfig = { first : roomHash
                          };
-        
         saveChatconfig( cont );
-    } );
+    });
 }
 
 function saveChatconfig( cont )
@@ -169,21 +200,40 @@ function saveChatconfig( cont )
     } );
 }
 
-function addChatMessage( content , cont )
+function saveRoom( name , json , cont )
 {
-    var message = { content : userChatConfig.userName + ": " + content
-                  , timeStamp : timeStamp()
-                  };
-    
-    userChatConfig.hotMessages.push( message );
-    sortMessages( userChatConfig.hotMessages );
-    saveChatconfig( cont );
-//    ipfsAdd( JSON.stringify( message ) , function(messageHash)
-//    {
-//        userChatConfig.hotMessages.push( message );
-//        sortMessages( userChatConfig.hotMessages );
-//        saveChatconfig( cont );
-//    } );
+    ipfsAdd( JSON.stringify( json ) , function(hash)
+    {
+        userChatConfig[name] = hash;
+        
+        saveChatconfig( cont );
+    });
+}
+
+
+function withRoom( roomName , cont )
+{
+    ipfsGet( userChatConfig[roomName] , function(r)
+    {
+        safeParseCont( r , emptyFunction , cont);
+    });
+}
+
+function addChatMessage( roomName , content , cont )
+{
+    ipfsGet( userChatConfig[roomName] , function(r)
+    {
+        safeParseCont( r , emptyFunction , function(room)
+        {
+            var message = { content : room.userName + ": " + content
+                          , timeStamp : timeStamp()
+                          };
+            
+            room.hotMessages.push( message );
+            sortMessages( room.hotMessages );
+            saveRoom( roomName , room , cont );
+        });
+    });
 }
 
 function init()
@@ -191,101 +241,142 @@ function init()
     if ( document.location.href.indexOf("api=") != -1 )
         baseApiUrl = document.location.href.split("api=")[1]
     
+    userChatConfig = {};
     chatLogLength = 15;
+    userHash = "Didn't get the ID yet";
+    currentRoom = "first";
     
-    addInitButtonTo( document.body );
-    ipnsStatus = cdiv();
+    //generateUI(currentRoom);
     
+    failFunction = function(){ setStatus("You need to press the init button!!!") };
+    
+    setStatus("Getting your ID");
     httpGet( baseApiUrl + "config?arg=Identity.PeerID" , function(r)
     {
-        userHash = JSON.parse(r).Value;
-        console.log("1");
+        setStatus("Got your ID");
         
-        ipfsResolveName( userHash , function(r)
+        safeParseCont( r , failFunction , function(userHashR)
         {
-            userPointedHash = r;
-            console.log("2");
+            userHash = userHashR.Value;
             
-            ipfsGet( userPointedHash , function(r)
+            ipfsResolveName( userHash , function(r)
             {
-                userChatConfig = JSON.parse(r);
-                console.log("3");
+                userPointedHash = r;
+                setStatus("Got your config hash");
                 
-                generateUI();
-                var updateTimer = setInterval( update , 1000 * 60 * 2 );
-            } );
-        } );
+                ipfsGet( userPointedHash , function(r)
+                {
+                    safeParseCont( r , failFunction , function(config)
+                    {
+                        setStatus("Got your config");
+                        userChatConfig = config;
+                        
+                        var updateTimer = setInterval( function(){ update(currentRoom) } , 1000 * 60 * 2 );
+                        generateUI(currentRoom);
+                    });
+                });
+            });
+        });
     } );
 }
 
-function update()
+function setStatus(s)
 {
-    console.log("Updating start");
-    ipnsStatus.innerHTML = "Update";
-    
-    function updateOtherUsers( n )
+    console.log("SET STATUS" , s);
+    if (window["statusDiv"])
+        statusDiv.innerHTML = s;
+    else
+        console.log("WRNING STATUS DIV NOT PRESENT");
+}
+
+function update( roomName )
+{
+    withRoom( roomName , function(room)
     {
-        var p = userChatConfig.others[n];
-        console.log("For other",p);
+        setStatus("Starting update");
         
-        ipfsResolveName( p.hash , function(p2ConfigHash)
+        function updateOtherUsers( n )
         {
-            console.log("Resolved other name");
-            ipfsGet( p2ConfigHash , function(p2Config)
+            var p = room.others[n];
+            console.log("For other",p);
+            
+            ipfsResolveName( p.hash , function(p2ConfigHash)
             {
-                console.log("Got other config");
-                var p2Config = JSON.parse( p2Config );
-                
-                var diff = compHotLists( userChatConfig.hotMessages , p2Config.hotMessages );
-                var time = timeStamp();
-                var diff = diff.filter( function(e)
+                console.log("Resolved other name");
+                ipfsGet( p2ConfigHash , function(p2ConfigR)
                 {
-                    return (e.timeStamp > time-userChatConfig.hotMessageAgeLimit) && (e.timeStamp < time);
-                } );
-                
-                for ( i in diff )
-                    userChatConfig.hotMessages.push( diff[i] );
-                sortMessages( userChatConfig.hotMessages );
-                
-                if ( n >= userChatConfig.others.length - 1 )
-                {
-                    console.log( "Start archiving" );
-                    archiveMessages( function()
+                    console.log("Got other config");
+                    var p2RoomHash = JSON.parse( p2ConfigR )[p.roomName];
+                    
+                    ipfsGet( p2RoomHash , function(p2RoomString)
                     {
-                        saveChatconfig( function(){ getChatLog( setChatContent ) } );
+                        safeParseCont( p2RoomString , emptyFunction , function(p2Room)
+                        {
+                            console.log("P2 ROOM" , p2Room);
+                            var diff = compHotLists( room.hotMessages , p2Room.hotMessages );
+                            console.log("DIFF",diff);
+                            var time = timeStamp();
+                            var diff = diff.filter( function(e)
+                            {
+                                return (e.timeStamp > time-room.hotMessageAgeLimit) && (e.timeStamp < time);
+                            } );
+                            console.log("DIFF2",diff);
+                            
+                            for ( i in diff )
+                                room.hotMessages.push( diff[i] );
+                            sortMessages( room.hotMessages );
+                            
+                            saveRoom( roomName , room , function()
+                            {
+                                if ( n >= room.others.length - 1 )
+                                {
+                                    console.log( "Start archiving" );
+                                    archiveMessages( roomName , refreshChatcontent );
+                                }
+                                else
+                                    updateOtherUsers( n+1 );
+                            });
+                        });
+                    });
+                } );
+            } );
+        }
+        
+        updateOtherUsers( 0 );
+    });
+}
+
+function refreshChatcontent()
+{
+    withRoom( currentRoom , function(room){ getChatLog( room , setChatContent ) } );
+}
+
+function archiveMessages( roomName , cont )
+{
+    ipfsGet( userChatConfig[roomName] , function(r)
+    {
+        safeParseCont( r , emptyFunction , function(room)
+        {
+            if ( room.hotMessages.length != 0 )
+            {
+                var lm = room.hotMessages[ room.hotMessages.length-1 ];
+                
+                if ( lm.timeStamp < timeStamp() - room.hotMessageAgeLimit )
+                {
+                    var message = room.hotMessages.splice( room.hotMessages.length-1 , 1 )[0];
+                    message.parent = room.archive;
+                    
+                    ipfsAdd( JSON.stringify( message ) , function(mHash)
+                    {
+                        room.archive = mHash;
+                        saveRoom( roomName , function(){ archiveMessages( roomName , cont ) } );
                     } );
                 }
                 else
-                    updateOtherUsers( n+1 );
-            } );
-        } );
-    }
-    
-    updateOtherUsers( 0 );
-}
-
-function archiveMessages( cont )
-{
-    if ( userChatConfig.hotMessages.length == 0 )
-        cont();
-    else
-    {
-        var lm = userChatConfig.hotMessages[ userChatConfig.hotMessages.length-1 ];
-        
-        if ( lm.timeStamp < timeStamp() - userChatConfig.hotMessageAgeLimit )
-        {
-            var message = userChatConfig.hotMessages.splice( userChatConfig.hotMessages.length-1 , 1 )[0];
-            message.parent = userChatConfig.archive;
-            
-            ipfsAdd( JSON.stringify( message ) , function(mHash)
-            {
-                userChatConfig.archive = mHash;
-                archiveMessages( cont );
-            } );
-        }
-        else
-            saveChatconfig( cont );
-    }
+                    cont();
+            }
+        });
+    });
 }
 
 function ce(p)
@@ -293,9 +384,57 @@ function ce(p)
     return document.createElement(p);
 }
 
-function cdiv()
+function cDiv()
 {
     return ce("div");
+}
+
+function cinput()
+{
+    var i = ce("input");
+    i.style.border = "none";
+    i.style.borderLeft = "3px solid green";
+    i.style.backgroundColor = "grey";
+    i.style.color = "white";
+    return i;
+}
+
+function cbutton()
+{
+    var b = ce("button");
+    b.style.border = "3px solid darkred";
+    b.style.backgroundColor = "black";
+    b.style.color = "white";
+    b.style.cursor = "pointer";
+    return b;
+}
+
+function addDivTo( e )
+{
+    var d = cDiv();
+    e.appendChild(d);
+    return d;
+}
+
+function addInputTo( e )
+{
+    var i = cinput();
+    e.appendChild(i);
+    return i;
+}
+
+function addButtonTo( e )
+{
+    var b = cbutton();
+    e.appendChild(b);
+    return b;
+}
+
+function addETo( st , e )
+{
+    var d = ce( st );
+    e.appendChild( d );
+    return d;
 }
 
 function onEnter(el,cont)
@@ -312,135 +451,135 @@ function onEnter(el,cont)
     };
 }
 
-function addDivTo( e )
+function generateUI( roomName )
 {
-    var d = cdiv();
-    e.appendChild(d);
-    return d;
-}
-
-function addETo( st , e )
-{
-    var d = ce( st );
-    e.appendChild( d );
-    return d;
-}
-
-function addInitButtonTo( e )
-{
-    var initButton = addETo( "button" , e );
-    initButton.innerHTML = "Init";
-    initButton.onclick = function()
+    ipfsGet( userChatConfig[roomName] , function(r)
     {
-        document.body.innerHTML = "Writing to your ipns can take some time. Please refresh the page in a minute.";
-        writeDefaultChatConfig(emptyFunction);
-    };
-}
-
-
-function generateUI()
-{
-    document.body.innerHTML = "";
-    
-    uiHead = addDivTo( document.body );
-    
-    addInitButtonTo( uiHead );
-    
-    userHashBox = addDivTo( uiHead );
-    userHashBox.innerHTML = "Your id is: " + userHash;
-    
-    ipnsStatus = addDivTo( uiHead );
-    ipnsStatus.innerHTML = "Ready";
-    
-    userNameBox = addDivTo( uiHead );
-    
-    userNameBoxText = addDivTo( userNameBox );
-    userNameBoxText.innerHTML = "User name (press enter to submit):";
-    
-    userNameInput = addETo( "input" , userNameBox );
-    userNameInput.value = userChatConfig.userName;
-    onEnter( userNameInput , function()
-    {
-        userChatConfig.userName = userNameInput.value;
-        saveChatconfig(emptyFunction);
-    } );
-    
-    addOtherBox = addDivTo( uiHead );
-    
-    addOtherText = addDivTo( addOtherBox );
-    addOtherText.innerHTML = "Add other person (press enter to submit):";
-    
-    addOtherInput = addETo( "input" , addOtherBox );
-    onEnter( addOtherInput , function()
-    {
-        userChatConfig.others.push( { hash : addOtherInput.value , lastHead : "" } );
-        addOtherInput.value = "";
-        saveChatconfig(emptyFunction);
-    } );
-    
-    chatLengthDiv = addETo( "div" , uiHead );
-    chatLengthText = addETo( "div" , chatLengthDiv );
-    chatLengthText.innerHTML = "Chat size";
-    chatLengthInput = addETo( "input" , chatLengthDiv );
-    chatLengthInput.value = chatLogLength;
-    onEnter( chatLengthInput , function()
-    {
-        chatLogLength = parseInt( chatLengthInput.value );
-        getChatLog( setChatContent );
-    } );
-    
-    forceUpdate = addETo( "button" , uiHead );
-    forceUpdate.innerHTML = "Force update";
-    forceUpdate.onclick = function()
-    {
-        update();
-    };
-    
-    getChatLog( function(chatLog)
-    {
-        chatContainer = cdiv();
-        setChatContent( chatLog );
-        document.body.appendChild( chatContainer );
-        
-        addMessageBox = { div : cdiv()
-                        , input : ce("input")
-                        , button : ce("button")
-                        };
-        
-        onEnter( addMessageBox.input , function()
+        safeParseCont( r , emptyFunction , function(room)
         {
-            var content = addMessageBox.input.value;
+            body = document.body;
+            body.innerHTML = "";
+            body.style.backgroundColor = "lightblue";
+            body.style.backgroundImage = "url(bc.png)";
+            body.style.color = "black";
+            //body.style.color = "darkmagenta";
+            body.style.padding = "0";
+            body.style.margin = "0";
             
-            if ( content != "" )
-            {
-                addMessageBox.input.value = "";
-                addChatMessage( content , function()
-                {
-                    getChatLog( setChatContent );
-                } );
-            }
-        } );
-        
-        addMessageBox.div.appendChild( addMessageBox.input );
-        addMessageBox.div.appendChild( addMessageBox.button );
-        
-        addMessageBox.button.innerHTML = "send";
-        addMessageBox.button.onclick = function(e)
-        {
-            var content = addMessageBox.input.value;
+            leftSection = addDivTo( body );
+            chatSection = addDivTo( body );
             
-            if ( content != "" )
+            logoDiv = addDivTo( leftSection );
+            uiHead = addDivTo( leftSection );
+            
+            leftSection.style.float = chatSection.style.float = "left";
+            leftSection.style.width = "33%";
+            uiHead.style.margin = "20px";
+            
+            chatSection.style.width = "67%";
+            chatSection.style.overflowY = "scroll";
+            chatSection.style.height = "100%";
+            
+            logoDiv.style.backgroundImage = "url(logo.png)";
+            logoDiv.style.backgroundRepeat = "no-repeat";
+            logoDiv.style.backgroundPosition = "58px 0px";
+            logoDiv.style.height = "300px";
+            
+            initButton = addButtonTo( uiHead );
+            initButton.innerHTML = "Init";
+            initButton.onclick = function()
             {
-                addMessageBox.input.value = "";
-                addChatMessage( content , function()
+                document.body.innerHTML = "Writing to your ipns can take some time. Please refresh the page in a minute.";
+                if (window["updateTimer"]) clearInterval( updateTimer );
+                writeDefaultChatConfig(emptyFunction);
+            };
+            forceUpdate = addButtonTo( uiHead );
+            forceUpdate.innerHTML = "Force update";
+            forceUpdate.style.marginLeft = "10px";
+            forceUpdate.onclick = function()
+            {
+                update(currentRoom);
+            };
+            
+            userHashBox = addDivTo( uiHead );
+            userHashBox.innerHTML = "Your id is: " + userHash;
+            userHashBox.style.fontSize = "12px";
+            
+            statusDiv = addDivTo( uiHead );
+            statusDiv.innerHTML = "Ready";
+            
+            userNameBox = addDivTo( uiHead );
+            
+            userNameBoxText = addDivTo( userNameBox );
+            userNameBoxText.innerHTML = "User name (press enter to submit):";
+            
+            userNameInput = addInputTo( userNameBox );
+            userNameInput.value = room.userName;
+            onEnter( userNameInput , function()
+            {
+                withRoom( roomName , function(room)
                 {
-                    getChatLog( setChatContent );
+                    room.userName = userNameInput.value;
+                    saveRoom( roomName , room , emptyFunction );
+                });
+            });
+            
+            addOtherBox = addDivTo( uiHead );
+            
+            addOtherText = addDivTo( addOtherBox );
+            addOtherText.innerHTML = "Add other person (press enter to submit):";
+            
+            addOtherInput = addInputTo( addOtherBox );
+            onEnter( addOtherInput , function()
+            {
+                withRoom( roomName , function(room)
+                {
+                    var hash = addOtherInput.value.split("/")[0];
+                    var otherRoomName = addOtherInput.value.split("/")[1];
+                    room.others.push( { hash : hash , roomName : otherRoomName } );
+                    addOtherInput.value = "";
+                    saveRoom( roomName , room , emptyFunction );
+                });
+            } );
+            
+            chatLengthDiv = addETo( "div" , uiHead );
+            chatLengthText = addETo( "div" , chatLengthDiv );
+            chatLengthText.innerHTML = "Chat size";
+            chatLengthInput = addInputTo( chatLengthDiv );
+            chatLengthInput.value = chatLogLength;
+            onEnter( chatLengthInput , function()
+            {
+                chatLogLength = parseInt( chatLengthInput.value );
+                refreshChatcontent();
+            } );
+            
+            getChatLog( room , function(chatLog)
+            {
+                chatContainer = addETo( "div" , chatSection );
+                setChatContent( chatLog );
+                
+                addMessageInput = cinput();
+                addMessageInput.style.width = "100%";
+                addMessageInput.style.height = "25px";
+                
+                onEnter( addMessageInput , function()
+                {
+                    var content = addMessageInput.value;
+                    
+                    if ( content != "" )
+                    {
+                        addMessageInput.value = "";
+                        addChatMessage( roomName , content , function()
+                        {
+                            refreshChatcontent();
+                        } );
+                    }
                 } );
-            }
-        };
-        
-        document.body.appendChild( addMessageBox.div );
-    } );
+                
+                chatSection.appendChild( addMessageInput );
+            } );
+        });
+    });
 }
 
 function setChatContent( chatLog )
@@ -455,13 +594,13 @@ function setChatContent( chatLog )
     }
 }
 
-function getChatLog( cont )
+function getChatLog( room , cont )
 {
-    var log = JSON.parse( JSON.stringify( userChatConfig.hotMessages ) );
+    var log = JSON.parse( JSON.stringify( room.hotMessages ) );
     if ( log.length < chatLogLength )
     {
         var l = chatLogLength - log.length;
-        getChatLogArchive( userChatConfig.archive , l , function(log2)
+        getChatLogArchive( room.archive , l , function(log2)
         {
             for ( i in log2 )
                 log.push( log2[i] );
