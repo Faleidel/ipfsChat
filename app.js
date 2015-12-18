@@ -254,9 +254,7 @@ function init()
     userHash = "Didn't get the ID yet";
     currentRoom = "first";
     
-    //generateUI(currentRoom);
-    
-    failFunction = function(){ setStatus("You need to press the init button!!!") };
+    failFunction = function(){ setStatus("You need to press the init button!!!") ; generateUI(currentRoom) ; };
     
     setStatus("Getting your ID");
     httpGet( baseApiUrl + "config?arg=Identity.PeerID" , function(r)
@@ -466,6 +464,11 @@ function onEnter(el,cont)
     };
 }
 
+function roomIsValid(room)
+{
+    return room["others"] != undefined && room["hotMessages"] != undefined && room["archive"] != undefined;
+}
+
 function generateUI( roomName )
 {
     ipfsGet( userChatConfig[roomName] , function(r)
@@ -496,6 +499,20 @@ function generateUI( roomName )
             logoDiv.style.backgroundRepeat = "no-repeat";
             logoDiv.style.backgroundPosition = "center";
             logoDiv.style.height = "300px";
+            
+            if ( !roomIsValid(room) ) // THIS IS A HACK...
+            {
+                initButton = addButtonTo( uiHead );
+                initButton.innerHTML = "Init";
+                initButton.onclick = function()
+                {
+                    document.body.innerHTML = "Writing to your ipns can take some time. Please refresh the page in a minute.";
+                    if (window["updateTimer"]) clearInterval( updateTimer );
+                    writeDefaultChatConfig(emptyFunction);
+                };
+                
+                return;
+            }
             
             roomText = addDivTo( uiHead );
             roomTextP1 = addETo( "span" , roomText ); roomTextP1.innerHTML = "Your are in ";
