@@ -42,9 +42,34 @@ function safeParseCont( s , faild , ok )
         ok(r);
 }
 
-Array.prototype.diff = function(a) {
-    return this.filter(function(i) {return a.indexOf(i) < 0;});
+function diffArraysOld(a,b)
+{
+    return a.filter( function(i){ return b.indexOf(i) < 0 ; } );
+}
+
+function diffArrays(a1, a2) {
+
+    var a = [], diff = [];
+
+    for (var i = 0; i < a1.length; i++) {
+        a[a1[i]] = true;
+    }
+
+    for (var i = 0; i < a2.length; i++) {
+        if (a[a2[i]]) {
+            delete a[a2[i]];
+        } else {
+            a[a2[i]] = true;
+        }
+    }
+
+    for (var k in a) {
+        diff.push(k);
+    }
+
+    return diff;
 };
+
 
 function compHotLists( l1 , l2 )
 {
@@ -97,7 +122,7 @@ function timeStamp()
 
 function sortMessages(list)
 {
-    return list.sort( function(a,b)
+    var l = list.sort( function(a,b)
     {
         if ( a.timeStamp < b.timeStamp )
             return 1;
@@ -106,6 +131,8 @@ function sortMessages(list)
         else
             return 0;
     } );
+    l = l.filter( function(e){return e != null;} )
+    return l
 }
 
 function unsafeConcat(l1,l2)
@@ -123,7 +150,7 @@ httpGet = function( url , cont )
 {
     var xhReq = new XMLHttpRequest();
     xhReq.open("GET", url, true);
-    xhReq.onload = function(e){ console.log(e) ; cont( e.explicitOriginalTarget.responseText , e  ) };
+    xhReq.onload = function(e){ console.log(e) ; cont( e.currentTarget.responseText , e  ) };
     xhReq.send(null);
 }
 
@@ -131,7 +158,7 @@ httpPost = function( url , content , cont )
 {
     var xhReq = new XMLHttpRequest();
     xhReq.open("POST", url, true);
-    xhReq.onload = function(e){ console.log(e) ; cont( e.explicitOriginalTarget.responseText , e ) };
+    xhReq.onload = function(e){ console.log(e) ; cont( e.currentTarget.responseText , e ) };
     
     var c = 'Content-Disposition: file; filename=""\nContent-Type: application/octet-stream\n\n';
     
@@ -277,7 +304,7 @@ function init()
                         setStatus("Got your config");
                         userChatConfig = config;
                         
-                        var updateTimer = setInterval( function(){ update(currentRoom) } , 1000 * 60 * 2 );
+                        var updateTimer = setInterval( function(){ update(currentRoom) } , 1000 * 60 * 1 );
                         generateUI(currentRoom);
                     });
                 });
@@ -318,7 +345,7 @@ function update( roomName )
                     {
                         safeParseCont( p2RoomString , emptyFunction , function(p2Room)
                         {
-                            console.log("P2 ROOM" , p2Room);
+                            console.log("P2 ROOM" , p2Room , room);
                             var diff = compHotLists( room.hotMessages , p2Room.hotMessages );
                             var time = timeStamp();
                             if (diff.length > 10)
@@ -330,7 +357,7 @@ function update( roomName )
                             }
                             console.log("DIFF2",diff);
                             
-                            var othersDiff = p2Room.others.diff( room.others );
+                            var othersDiff = diffArrays( p2Room.others , room.others );
                             for ( i in othersDiff )
                                 room.others.push( othersDiff[i] );
                             
@@ -354,7 +381,10 @@ function update( roomName )
             } );
         }
         
-        updateOtherUsers( 0 );
+        if (room.others.length != 0)
+            updateOtherUsers( 0 );
+        else
+            setStatus("Ready");
     });
 }
 
@@ -655,9 +685,14 @@ function setChatContent( chatLog )
     
     for ( var i = chatLog.length-1 ; i >= 0 ; i-- )
     {
-        var message = ce("pre");
-        message.innerHTML = escapeHtml( chatLog[i].content );
-        chatContainer.appendChild(message);
+        if (chatLog[i] != null && chatLog[i] != undefined)
+        {
+            var message = ce("pre");
+            message.innerHTML = escapeHtml( chatLog[i].content );
+            chatContainer.appendChild(message);
+        }
+        else
+            console.log( "NULL OR UNDEFINED MESSAGE IN SET CHAT CONTENT" , chatLog );
     }
 }
 
