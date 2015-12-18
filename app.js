@@ -42,6 +42,10 @@ function safeParseCont( s , faild , ok )
         ok(r);
 }
 
+Array.prototype.diff = function(a) {
+    return this.filter(function(i) {return a.indexOf(i) < 0;});
+};
+
 function compHotLists( l1 , l2 )
 {
     if ( l1.length == 0 )
@@ -112,6 +116,8 @@ function unsafeConcat(l1,l2)
 }
 
 function emptyFunction(){}
+
+function error(s){ return function(){log(s)} }
 
 httpGet = function( url , cont )
 {
@@ -202,6 +208,8 @@ function saveChatconfig( cont )
 
 function saveRoom( name , json , cont )
 {
+    if (json == undefined || json == null) { console.log("ERROR SAVING UNDEFINED ROOM",json,name,cont) ; return ; }
+    
     ipfsAdd( JSON.stringify( json ) , function(hash)
     {
         userChatConfig[name] = hash;
@@ -286,7 +294,7 @@ function setStatus(s)
     if (window["statusDiv"])
         statusDiv.innerHTML = s;
     else
-        console.log("WRNING STATUS DIV NOT PRESENT");
+        console.log("WARNING STATUS DIV NOT PRESENT");
 }
 
 function update( roomName )
@@ -314,13 +322,19 @@ function update( roomName )
                         {
                             console.log("P2 ROOM" , p2Room);
                             var diff = compHotLists( room.hotMessages , p2Room.hotMessages );
-                            console.log("DIFF",diff);
                             var time = timeStamp();
-                            var diff = diff.filter( function(e)
+                            if (diff.length > 10)
                             {
-                                return (e.timeStamp > time-room.hotMessageAgeLimit) && (e.timeStamp < time);
-                            } );
+                                diff = diff.filter( function(e)
+                                {
+                                    return (e.timeStamp > time-room.hotMessageAgeLimit) && (e.timeStamp < time);
+                                } );
+                            }
                             console.log("DIFF2",diff);
+                            
+                            var othersDiff = p2Room.others.diff( room.others );
+                            for ( i in othersDiff )
+                                room.others.push( othersDiff[i] );
                             
                             for ( i in diff )
                                 room.hotMessages.push( diff[i] );
@@ -369,7 +383,7 @@ function archiveMessages( roomName , cont )
                     ipfsAdd( JSON.stringify( message ) , function(mHash)
                     {
                         room.archive = mHash;
-                        saveRoom( roomName , function(){ archiveMessages( roomName , cont ) } );
+                        saveRoom( roomName , room , function(){ archiveMessages( roomName , cont ) } );
                     } );
                 }
                 else
@@ -396,6 +410,7 @@ function cinput()
     i.style.borderLeft = "3px solid green";
     i.style.backgroundColor = "grey";
     i.style.color = "white";
+    i.style.width = "100%";
     return i;
 }
 
@@ -455,14 +470,13 @@ function generateUI( roomName )
 {
     ipfsGet( userChatConfig[roomName] , function(r)
     {
-        safeParseCont( r , emptyFunction , function(room)
+        safeParseCont( r , error("ERROR PARSING ROOM DATA") , function(room)
         {
             body = document.body;
             body.innerHTML = "";
             body.style.backgroundColor = "lightblue";
             body.style.backgroundImage = "url(bc.png)";
             body.style.color = "black";
-            //body.style.color = "darkmagenta";
             body.style.padding = "0";
             body.style.margin = "0";
             
@@ -477,13 +491,19 @@ function generateUI( roomName )
             uiHead.style.margin = "20px";
             
             chatSection.style.width = "67%";
-            chatSection.style.overflowY = "scroll";
-            chatSection.style.height = "100%";
             
             logoDiv.style.backgroundImage = "url(logo.png)";
             logoDiv.style.backgroundRepeat = "no-repeat";
-            logoDiv.style.backgroundPosition = "58px 0px";
+            logoDiv.style.backgroundPosition = "center";
             logoDiv.style.height = "300px";
+            
+            roomText = addDivTo( uiHead );
+            roomTextP1 = addETo( "span" , roomText ); roomTextP1.innerHTML = "Your are in ";
+            roomTextP2 = addETo( "span" , roomText ); roomTextP2.innerHTML = "room " + currentRoom;
+            roomTextP3 = addETo( "span" , roomText ); roomTextP3.innerHTML = ". This room is connected to " + room.others.length + " other persons.";
+            
+            roomText.style.fontSize = "25px";
+            roomTextP2.style.color = "darkred";
             
             initButton = addButtonTo( uiHead );
             initButton.innerHTML = "Init";
@@ -502,8 +522,10 @@ function generateUI( roomName )
             };
             
             userHashBox = addDivTo( uiHead );
-            userHashBox.innerHTML = "Your id is: " + userHash;
-            userHashBox.style.fontSize = "12px";
+            userHashBox.innerHTML = "The room id to share is : ";
+            userHashBoxValue = addInputTo( userHashBox );
+            userHashBoxValue.value = userHash + "/" + currentRoom;
+            userHashBoxValue.style.display = "block";
             
             statusDiv = addDivTo( uiHead );
             statusDiv.innerHTML = "Ready";
@@ -527,7 +549,7 @@ function generateUI( roomName )
             addOtherBox = addDivTo( uiHead );
             
             addOtherText = addDivTo( addOtherBox );
-            addOtherText.innerHTML = "Add other person (press enter to submit):";
+            addOtherText.innerHTML = "Connect with someone else room id (press enter to submit):";
             
             addOtherInput = addInputTo( addOtherBox );
             onEnter( addOtherInput , function()
@@ -552,6 +574,34 @@ function generateUI( roomName )
                 chatLogLength = parseInt( chatLengthInput.value );
                 refreshChatcontent();
             } );
+            
+            addChatRoomDiv = addDivTo( uiHead );
+            addChatRoomText = addDivTo( addChatRoomDiv );
+            addChatRoomText.innerHTML = "Add chat room (press enter to submit):";
+            addChatRoomInput = addInputTo( addChatRoomDiv );
+            onEnter( addChatRoomInput , function()
+            {
+                ipfsAdd( JSON.stringify( defaultRoomConfig() ) , function(hash)
+                {
+                    userChatConfig[ addChatRoomInput.value ] = hash;
+                    addChatRoomInput.value = "";
+                    saveChatconfig( function(){ generateUI(currentRoom) } );
+                });
+            });
+            
+            roomsButtons = addDivTo( uiHead );
+            for ( i in userChatConfig )
+            {
+                var b = addButtonTo( uiHead );
+                b.innerHTML = "Switch to room: " + i;
+                b.style.display = "block";
+                b.style.marginTop = "10px";
+                b.onclick = (function(i){return function() // extra function and strange calling to fix javascript scopping
+                {
+                    currentRoom = i;
+                    generateUI( currentRoom );
+                }})(i);
+            }
             
             getChatLog( room , function(chatLog)
             {
