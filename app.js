@@ -649,16 +649,21 @@ function getChatLog( room , cont )
     var log = JSON.parse( JSON.stringify( room.hotMessages ) );
     if ( log.length < chatLogLength )
     {
-        var l = chatLogLength - log.length;
-        getChatLogArchive( room.archive , l , function(log2)
+        if (room.archive != "")
         {
-            for ( i in log2 )
-                log.push( log2[i] );
-            cont( log );
-        } );
+            var l = chatLogLength - log.length;
+            getChatLogArchive( room.archive , l , function(log2)
+            {
+                for ( i in log2 )
+                    log.push( log2[i] );
+                cont( log );
+            } );
+        }
+        else
+            cont(log);
     }
     else
-        return cont( log );
+        cont( log );
 }
 
 function getChatLogArchive( startHash , num , cont )
