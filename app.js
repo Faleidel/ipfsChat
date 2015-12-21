@@ -648,6 +648,23 @@ function roomIsValid(room)
     return room["others"] != undefined && room["hotMessages"] != undefined && room["archive"] != undefined;
 }
 
+function addInputWithTextTo(e,text,value,callBack)
+{
+    var box = addDivTo( e );
+    
+    var textDiv = addDivTo( box );
+    textDiv.innerHTML = text;
+    
+    var input = addInputTo( box );
+    input.value = value;
+    
+    var obj = { box : box , text : textDiv , input : input };
+    
+    onEnter( input , () => callBack(obj) );
+    
+    return obj;
+}
+
 function generateUI( userChatConfig , roomName )
 {
     ipfsGet( userChatConfig[roomName] , function(r)
@@ -757,18 +774,20 @@ function generateUI( userChatConfig , roomName )
                 });
             });
             
-            var userIconBox = addDivTo( uiHead );
-            
-            var userIconBoxText = addDivTo( userIconBox );
-            userIconBoxText.innerHTML = "Chat icon (press enter to submit):";
-            
-            var userIconInput = addInputTo( userIconBox );
-            userIconInput.value = room.userIcon || "";
-            onEnter( userIconInput , function()
+            addInputWithTextTo( uiHead , "Chat icon (press enter to submit):" , room.userIcon || "" , obj =>
             {
-                withRoom( userChatConfig[roomName] , function(room)
+                withRoom( userChatConfig[roomName] , room =>
                 {
-                    room.userIcon = userIconInput.value;
+                    room.userIcon = obj.input.value;
+                    saveRoom( userChatConfig , roomName , room , emptyFunction );
+                });
+            });
+            
+            addInputWithTextTo( uiHead , "Background icon (press enter to submit):" , room.background || "" , obj =>
+            {
+                withRoom( userChatConfig[roomName] , room =>
+                {
+                    room.background = obj.input.value;
                     saveRoom( userChatConfig , roomName , room , emptyFunction );
                 });
             });
